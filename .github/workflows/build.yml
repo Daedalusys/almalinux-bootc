@@ -162,6 +162,8 @@ jobs:
     permissions:
       contents: read
       packages: read
+    env:
+      VERSION_MAJOR: ${{ matrix.VERSION_MAJOR }}
     strategy:
       fail-fast: false
       matrix:
@@ -230,6 +232,8 @@ jobs:
     permissions:
       contents: read
       packages: read
+    env:
+      VERSION_MAJOR: ${{ matrix.VERSION_MAJOR }}
     strategy:
       fail-fast: false
       matrix:
