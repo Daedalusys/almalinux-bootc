@@ -20,17 +20,56 @@ Run the verification suite locally:
 ```bash
 cd /home/lofibass/code/Daedalus/almalinux-bootc
 
-# 1. Static: manifest has no GUI packages
-./tests/no-gui.sh
+# 1. Static: manifest has no GUI packages (no container needed)
+just verify-headless-manifest
 
-# 2. Static: rescue-path.sh works against the published image
-IMAGE=quay.io/almalinuxorg/almalinux-bootc:10-kitten ./tests/rescue-path.sh
+# 2. Static: published image has no GUI packages + rescue path is usable
+just verify-headless
 
 # 3. Static: HEADLESS_BASE_IMAGE consistency (daedalus-core consumer)
 grep -q 'ghcr.io/daedalusys/almalinux-bootc' README.md
 ```
 
 If any of these fail, the change violates a fork invariant — fix before PR.
+
+The same checks run in CI — see [headless guarantees](#headless-guarantees).
+
+## headless guarantees
+
+Two guard scripts hold the headless invariants: `tests/no-gui.sh` checks that no GUI
+package reached the image, `tests/rescue-path.sh` checks that the rescue path (sshd +
+serial console) is usable. Both static sections run in CI, the live section runs rarely.
+
+| Layer | Where | When | A red result |
+|---|---|---|---|
+| manifest scan | `build` job → `Verify headless invariants` | every build (amd64) | blocks the build, the image is not pushed |
+| image probes | `verify-headless` job | after every build | its own status check, eligible for a required check |
+| live probe | `verify-headless-live` job | `workflow_dispatch`, weekly cron | does not block a release, but every red result needs a look |
+
+Reproduce locally — same entry points as CI:
+
+```bash
+just verify-headless                    # static sections, probes the published :10-kitten
+IMAGE=ghcr.io/daedalusys/almalinux-bootc:10-kitten-amd64 just verify-headless   # probe one image
+just verify-headless-manifest           # manifest scan only, no container needed
+just verify-headless-live               # live section, needs a host that can boot systemd
+```
+
+Notes:
+
+- The upstream `quay.io/almalinuxorg/almalinux-bootc` image is not a valid probe
+  target: it ships no `openssh-server`, so the rescue-path probes fail there by design.
+  Probe this fork's published image instead.
+- Container probes need a CPU with x86-64-v3 support (AlmaLinux 10 glibc hard
+  requirement). On older hardware `podman run` fails with
+  `Fatal glibc error: CPU does not support x86-64-v3` and the whole image-probe layer
+  is void — such a machine can only run `just verify-headless-manifest`. CI skips the
+  image probes the same way and raises a warning.
+- `just build` runs `make image`, which uses `sudo podman`, so the image lands in root's
+  storage. Probing a freshly built image needs the same podman:
+  `sudo env "PATH=$PATH" IMAGE=localhost/almalinux-bootc:10-kitten just verify-headless`.
+- The workflow triggers on `push: main`, `workflow_dispatch` and a weekly cron — there is
+  no `pull_request` trigger, so a red gate becomes visible after the merge, not before it.
 
 ## Opening a PR
 

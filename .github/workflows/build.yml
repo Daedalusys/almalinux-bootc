@@ -76,6 +76,50 @@ jobs:
       # from the build container's. The image is bootc-valid without rechunk;
       # chunking is an optimization. Re-enable after fixing storage sharing.
 
+      # headless guarantees gate: "no GUI package in the image" and
+      # "rescue path usable". amd64 only: arm64 needs QEMU emulation, which is
+      # slow and prone to false positives. Placed before the push — an image
+      # that fails the gate does not reach the registry.
+      - name: Install just (headless gate)
+        if: matrix.ARCH == 'amd64'
+        run: |
+          set -euo pipefail
+          if ! command -v just >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y just
+          fi
+          just --version
+
+      - name: Verify headless invariants (amd64 only)
+        if: matrix.ARCH == 'amd64'
+        env:
+          ARCH: ${{ matrix.ARCH }}
+        run: |
+          set -euo pipefail
+          IMG="localhost/${IMAGE_NAME}:${VERSION_MAJOR}-${ARCH}"
+
+          # Layer 1: manifest scan. Needs no container, runs on any runner,
+          # and is always a gate.
+          just verify-headless-manifest
+
+          # Layer 2: image probes. Needs a runner CPU with x86-64-v3 support
+          # (AlmaLinux 10 glibc hard requirement). Probe the capability first:
+          # on a runner without it, skip this layer with a warning instead of
+          # turning CI into a noise source.
+          if ! probe_out=$(sudo env "PATH=$PATH" \
+              podman run --rm "$IMG" rpm --version 2>&1); then
+            echo "$probe_out" | head -5
+            if echo "$probe_out" | grep -q 'CPU does not support x86-64'; then
+              echo "::warning::runner CPU lacks x86-64-v3, skipping probes"
+              exit 0
+            fi
+            # not a CPU instruction set issue — the image itself is broken
+            echo "::error::image cannot run, headless probes impossible"
+            exit 1
+          fi
+
+          sudo env "PATH=$PATH" IMAGE="$IMG" just verify-headless
+
       - name: Login to ghcr.io
         if: github.event_name != 'schedule'
         uses: docker/login-action@d3b9cdfa580156c018ca5e745c1bf653d8ea46b5
@@ -105,6 +149,124 @@ jobs:
           name: digests-${{ matrix.VERSION_MAJOR }}-${{ matrix.ARCH }}
           path: /tmp/digest-${{ matrix.VERSION_MAJOR }}-${{ matrix.ARCH }}
           retention-days: 1
+
+  # The two headless guarantees as their own job: an independent red dot in
+  # the GitHub UI, usable as a required check, and a durable answer to "was
+  # the image we published actually verified?". No overlap with the gate in
+  # the build job: that one probes the freshly built local image (before the
+  # push), this one probes the tag that was actually published.
+  verify-headless:
+    name: Verify headless invariants
+    runs-on: ubuntu-24.04
+    needs: [set-versions-matrix, build]
+    permissions:
+      contents: read
+      packages: read
+    env:
+      VERSION_MAJOR: ${{ matrix.VERSION_MAJOR }}
+    strategy:
+      fail-fast: false
+      matrix:
+        VERSION_MAJOR: ${{ fromJSON(
+            needs.set-versions-matrix.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install just + podman
+        run: |
+          set -euo pipefail
+          if ! command -v just >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y just
+          fi
+          sudo apt-get update -y
+          sudo apt-get install -y podman
+
+      - name: Login to ghcr.io
+        uses: docker/login-action@d3b9cdfa580156c018ca5e745c1bf653d8ea46b5
+        with:
+          registry: ${{ env.IMAGE_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify (manifest static + published image)
+        run: |
+          set -euo pipefail
+          IMG="${IMAGE_REGISTRY}/${IMAGE_OWNER}/${IMAGE_NAME}:${VERSION_MAJOR}-amd64"
+          sudo podman pull "$IMG"
+
+          # Layer 1: manifest scan. Needs no container, runs on any runner.
+          just verify-headless-manifest
+
+          # Layer 2: image probes. Needs a runner CPU with x86-64-v3 support.
+          # Probe the capability first: on a runner without it, skip this layer
+          # with a warning instead of turning CI into a noise source.
+          if ! probe_out=$(sudo env "PATH=$PATH" \
+              podman run --rm "$IMG" rpm --version 2>&1); then
+            echo "$probe_out" | head -5
+            if echo "$probe_out" | grep -q 'CPU does not support x86-64'; then
+              echo "::warning::runner CPU lacks x86-64-v3, skipping probes"
+              exit 0
+            fi
+            # not a CPU instruction set issue — the image itself is broken
+            echo "::error::image cannot run, headless probes impossible"
+            exit 1
+          fi
+
+          sudo env "PATH=$PATH" IMAGE="$IMG" just verify-headless
+
+  # live section (Probe 6): boot a full systemd, verify sshd really is active
+  # and that no GUI unit file exists. Rare but valuable: manual trigger and
+  # weekly cron only, never on every push. Environment sensitive (systemd in a
+  # container), so it is not a merge gate: continue-on-error keeps a flaky red
+  # from blocking a release — but every red result needs a look, and repeated
+  # reds mean a real regression.
+  verify-headless-live:
+    name: Verify headless rescue path (live)
+    runs-on: ubuntu-24.04
+    needs: [set-versions-matrix, build]
+    continue-on-error: true
+    if: github.event_name == 'workflow_dispatch'
+        || github.event_name == 'schedule'
+    permissions:
+      contents: read
+      packages: read
+    env:
+      VERSION_MAJOR: ${{ matrix.VERSION_MAJOR }}
+    strategy:
+      fail-fast: false
+      matrix:
+        VERSION_MAJOR: ${{ fromJSON(
+            needs.set-versions-matrix.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install just + podman
+        run: |
+          set -euo pipefail
+          if ! command -v just >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y just
+          fi
+          sudo apt-get update -y
+          sudo apt-get install -y podman
+
+      - name: Login to ghcr.io
+        uses: docker/login-action@d3b9cdfa580156c018ca5e745c1bf653d8ea46b5
+        with:
+          registry: ${{ env.IMAGE_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Live probe
+        run: |
+          set -euo pipefail
+          IMG="${IMAGE_REGISTRY}/${IMAGE_OWNER}/${IMAGE_NAME}:${VERSION_MAJOR}-amd64"
+          sudo podman pull "$IMG"
+          sudo env "PATH=$PATH" IMAGE="$IMG" RESCUE_SSH_PORT=22022 \
+            just verify-headless-live
 
   sign-and-manifest:
     name: Sign + manifest

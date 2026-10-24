@@ -2,6 +2,11 @@ PODMAN = sudo podman
 
 IMAGE_NAME = almalinux-bootc
 VERSION_MAJOR = 10
+# This fork ships the kitten variant only: the Containerfile directory and the
+# image tag both follow the variant name, matching the :10-kitten /
+# :10-kitten-<arch> tags CI publishes (docs/REGISTRY.md).
+VARIANT := $(VERSION_MAJOR)-kitten
+IMAGE_TAG := $(VARIANT)
 PLATFORM = linux/amd64
 LABELS ?=
 
@@ -18,8 +23,8 @@ image:
 		--device /dev/fuse \
 		--iidfile /tmp/image-id \
 		$(LABELS) \
-		-t $(IMAGE_NAME) \
-		-f $(VERSION_MAJOR)/Containerfile \
+		-t $(IMAGE_NAME):$(IMAGE_TAG) \
+		-f $(VARIANT)/Containerfile \
 		.
 
 rechunk:
@@ -29,6 +34,6 @@ rechunk:
 		-v /var/lib/containers:/var/lib/containers:z \
 		quay.io/centos-bootc/centos-bootc:stream10 \
 		/usr/libexec/bootc-base-imagectl rechunk \
-		localhost/$(IMAGE_NAME):latest localhost/rechunked-$(IMAGE_NAME):latest && \
-	$(PODMAN) tag localhost/rechunked-$(IMAGE_NAME):latest localhost/$(IMAGE_NAME):latest && \
-	$(PODMAN) rmi localhost/rechunked-$(IMAGE_NAME):latest
+		localhost/$(IMAGE_NAME):$(IMAGE_TAG) localhost/rechunked-$(IMAGE_NAME):$(IMAGE_TAG) && \
+	$(PODMAN) tag localhost/rechunked-$(IMAGE_NAME):$(IMAGE_TAG) localhost/$(IMAGE_NAME):$(IMAGE_TAG) && \
+	$(PODMAN) rmi localhost/rechunked-$(IMAGE_NAME):$(IMAGE_TAG)
