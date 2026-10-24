@@ -150,6 +150,70 @@ jobs:
           path: /tmp/digest-${{ matrix.VERSION_MAJOR }}-${{ matrix.ARCH }}
           retention-days: 1
 
+  # The two headless guarantees as their own job: an independent red dot in
+  # the GitHub UI, usable as a required check, and a durable answer to "was
+  # the image we published actually verified?". No overlap with the gate in
+  # the build job: that one probes the freshly built local image (before the
+  # push), this one probes the tag that was actually published.
+  verify-headless:
+    name: Verify headless invariants
+    runs-on: ubuntu-24.04
+    needs: [set-versions-matrix, build]
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        VERSION_MAJOR: ${{ fromJSON(
+            needs.set-versions-matrix.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install just + podman
+        run: |
+          set -euo pipefail
+          if ! command -v just >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y just
+          fi
+          sudo apt-get update -y
+          sudo apt-get install -y podman
+
+      - name: Login to ghcr.io
+        uses: docker/login-action@d3b9cdfa580156c018ca5e745c1bf653d8ea46b5
+        with:
+          registry: ${{ env.IMAGE_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify (manifest static + published image)
+        run: |
+          set -euo pipefail
+          IMG="${IMAGE_REGISTRY}/${IMAGE_OWNER}/${IMAGE_NAME}:${VERSION_MAJOR}-amd64"
+          sudo podman pull "$IMG"
+
+          # Layer 1: manifest scan. Needs no container, runs on any runner.
+          just verify-headless-manifest
+
+          # Layer 2: image probes. Needs a runner CPU with x86-64-v3 support.
+          # Probe the capability first: on a runner without it, skip this layer
+          # with a warning instead of turning CI into a noise source.
+          if ! probe_out=$(sudo env "PATH=$PATH" \
+              podman run --rm "$IMG" rpm --version 2>&1); then
+            echo "$probe_out" | head -5
+            if echo "$probe_out" | grep -q 'CPU does not support x86-64'; then
+              echo "::warning::runner CPU lacks x86-64-v3, skipping probes"
+              exit 0
+            fi
+            # not a CPU instruction set issue — the image itself is broken
+            echo "::error::image cannot run, headless probes impossible"
+            exit 1
+          fi
+
+          sudo env "PATH=$PATH" IMAGE="$IMG" just verify-headless
+
   sign-and-manifest:
     name: Sign + manifest
     needs: [set-versions-matrix, build]
