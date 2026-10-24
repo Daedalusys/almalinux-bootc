@@ -76,6 +76,50 @@ jobs:
       # from the build container's. The image is bootc-valid without rechunk;
       # chunking is an optimization. Re-enable after fixing storage sharing.
 
+      # headless guarantees gate: "no GUI package in the image" and
+      # "rescue path usable". amd64 only: arm64 needs QEMU emulation, which is
+      # slow and prone to false positives. Placed before the push — an image
+      # that fails the gate does not reach the registry.
+      - name: Install just (headless gate)
+        if: matrix.ARCH == 'amd64'
+        run: |
+          set -euo pipefail
+          if ! command -v just >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y just
+          fi
+          just --version
+
+      - name: Verify headless invariants (amd64 only)
+        if: matrix.ARCH == 'amd64'
+        env:
+          ARCH: ${{ matrix.ARCH }}
+        run: |
+          set -euo pipefail
+          IMG="localhost/${IMAGE_NAME}:${VERSION_MAJOR}-${ARCH}"
+
+          # Layer 1: manifest scan. Needs no container, runs on any runner,
+          # and is always a gate.
+          just verify-headless-manifest
+
+          # Layer 2: image probes. Needs a runner CPU with x86-64-v3 support
+          # (AlmaLinux 10 glibc hard requirement). Probe the capability first:
+          # on a runner without it, skip this layer with a warning instead of
+          # turning CI into a noise source.
+          if ! probe_out=$(sudo env "PATH=$PATH" \
+              podman run --rm "$IMG" rpm --version 2>&1); then
+            echo "$probe_out" | head -5
+            if echo "$probe_out" | grep -q 'CPU does not support x86-64'; then
+              echo "::warning::runner CPU lacks x86-64-v3, skipping probes"
+              exit 0
+            fi
+            # not a CPU instruction set issue — the image itself is broken
+            echo "::error::image cannot run, headless probes impossible"
+            exit 1
+          fi
+
+          sudo env "PATH=$PATH" IMAGE="$IMG" just verify-headless
+
       - name: Login to ghcr.io
         if: github.event_name != 'schedule'
         uses: docker/login-action@d3b9cdfa580156c018ca5e745c1bf653d8ea46b5
