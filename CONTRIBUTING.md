@@ -20,11 +20,11 @@ Run the verification suite locally:
 ```bash
 cd /home/lofibass/code/Daedalus/almalinux-bootc
 
-# 1. Static: manifest has no GUI packages
-./tests/no-gui.sh
+# 1. Static: manifest has no GUI packages (no container needed)
+just verify-headless-manifest
 
-# 2. Static: rescue-path.sh works against the published image
-IMAGE=quay.io/almalinuxorg/almalinux-bootc:10-kitten ./tests/rescue-path.sh
+# 2. Static: published image has no GUI packages + rescue path is usable
+just verify-headless
 
 # 3. Static: HEADLESS_BASE_IMAGE consistency (daedalus-core consumer)
 grep -q 'ghcr.io/daedalusys/almalinux-bootc' README.md
@@ -57,6 +57,9 @@ just verify-headless-live               # live section, needs a host that can bo
 
 Notes:
 
+- The upstream `quay.io/almalinuxorg/almalinux-bootc` image is not a valid probe
+  target: it ships no `openssh-server`, so the rescue-path probes fail there by design.
+  Probe this fork's published image instead.
 - Container probes need a CPU with x86-64-v3 support (AlmaLinux 10 glibc hard
   requirement). On older hardware `podman run` fails with
   `Fatal glibc error: CPU does not support x86-64-v3` and the whole image-probe layer
