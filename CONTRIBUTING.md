@@ -50,7 +50,7 @@ Reproduce locally — same entry points as CI:
 
 ```bash
 just verify-headless                    # static sections, probes the published :10-kitten
-IMAGE=localhost/almalinux-bootc:10-kitten just verify-headless   # probe a specific image
+IMAGE=ghcr.io/daedalusys/almalinux-bootc:10-kitten-amd64 just verify-headless   # probe one image
 just verify-headless-manifest           # manifest scan only, no container needed
 just verify-headless-live               # live section, needs a host that can boot systemd
 ```
