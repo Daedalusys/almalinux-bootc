@@ -214,6 +214,56 @@ jobs:
 
           sudo env "PATH=$PATH" IMAGE="$IMG" just verify-headless
 
+  # live section (Probe 6): boot a full systemd, verify sshd really is active
+  # and that no GUI unit file exists. Rare but valuable: manual trigger and
+  # weekly cron only, never on every push. Environment sensitive (systemd in a
+  # container), so it is not a merge gate: continue-on-error keeps a flaky red
+  # from blocking a release — but every red result needs a look, and repeated
+  # reds mean a real regression.
+  verify-headless-live:
+    name: Verify headless rescue path (live)
+    runs-on: ubuntu-24.04
+    needs: [set-versions-matrix, build]
+    continue-on-error: true
+    if: github.event_name == 'workflow_dispatch'
+        || github.event_name == 'schedule'
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        VERSION_MAJOR: ${{ fromJSON(
+            needs.set-versions-matrix.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install just + podman
+        run: |
+          set -euo pipefail
+          if ! command -v just >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y just
+          fi
+          sudo apt-get update -y
+          sudo apt-get install -y podman
+
+      - name: Login to ghcr.io
+        uses: docker/login-action@d3b9cdfa580156c018ca5e745c1bf653d8ea46b5
+        with:
+          registry: ${{ env.IMAGE_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Live probe
+        run: |
+          set -euo pipefail
+          IMG="${IMAGE_REGISTRY}/${IMAGE_OWNER}/${IMAGE_NAME}:${VERSION_MAJOR}-amd64"
+          sudo podman pull "$IMG"
+          sudo env "PATH=$PATH" IMAGE="$IMG" RESCUE_SSH_PORT=22022 \
+            just verify-headless-live
+
   sign-and-manifest:
     name: Sign + manifest
     needs: [set-versions-matrix, build]
