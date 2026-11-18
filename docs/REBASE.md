@@ -10,7 +10,9 @@
 | AlmaLinux security advisory | Immediate rebase + cherry-pick | manual |
 | Upstream release tagged | Rebase within 7 days | manual |
 
-The cron job in `.github/workflows/rebase-check.yml` checks monthly and opens an issue if upstream is behind.
+The cron job in `.github/workflows/rebase-check.yml` checks monthly and opens an issue **in this repository** (label `maintenance`) when the fork is more than 10 commits behind upstream.
+
+> **Alert channel prerequisites**: `gh issue create` in that workflow only works if **Issues stay enabled on this repo** and the `maintenance` label exists. If either is missing, the step fails and nobody learns the fork has rotted — the workflow's conclusion stays green. Checked 2026-11-18: `has_issues=true`, label present. Turning Issues off re-breaks this watchdog silently.
 
 ## Rebase command (clean history)
 
