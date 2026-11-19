@@ -30,14 +30,34 @@ git push origin main
 
 ## Conflict resolution
 
-The fork only modifies `10-kitten/almalinux-10-kitten.yaml`, `docs/IMAGE-SIZE.md`, `docs/REGISTRY.md`, `docs/REBASE.md`, `docs/UPSTREAM.md`, `README.md`, `.github/workflows/build.yml`, `tests/no-gui.sh`, and `tests/rescue-path.sh`. **The only conflict you should see is `LICENSE`** (if upstream updates copyright year) and **potentially `Makefile`** if upstream restructures the variant directory layout.
+The fork's own footprint (verified 2026-11-19 against upstream merge-base `67ed16e`):
 
-**Resolution strategy**:
+- **Modified**: `10-kitten/almalinux-10-kitten.yaml`, `.github/workflows/build.yml`, `Makefile`,
+  `README.md`, `CONTRIBUTING.md`, `justfile`, `docs/{IMAGE-SIZE,REGISTRY,REBASE,UPSTREAM}.md`,
+  `tests/no-gui.sh`, `tests/rescue-path.sh`
+- **Added**: `.github/workflows/rebase-check.yml`
+- **Deleted**: `9/Containerfile`, `9/almalinux-9.yaml`, `10/Containerfile`, `10/almalinux-10.yaml`
+- `LICENSE` is **not** modified by the fork, so it cannot conflict — if git ever reports a change
+  there, take upstream verbatim (GPL-3.0 mandates preservation).
 
-1. **`LICENSE`** — take upstream version verbatim (GPL-3.0 mandates preservation).
-2. **`Makefile`** — check if upstream renamed/removed variants. The fork only builds `10-kitten`; if upstream changes the variant list, update `IMAGE_NAME` and `VERSION_MAJOR` defaults to keep `10-kitten`.
-3. **`.github/workflows/`** — if upstream restructured actions, port the fork's adaptations (SHA pinning, ghcr.io target) onto the new layout.
-4. **All fork-owned files** (`docs/*`, `tests/*`, `README.md`) — these should never conflict; if they do, our changes are likely lost; git reflog + reset.
+The realistic conflicts, in order of likelihood:
+
+1. **Deleted variant dirs (`9/`, `10/`)** — upstream edits to those files surface as
+   delete/modify conflicts. Resolution: keep the deletion (`git rm`); the fork only builds
+   `10-kitten`, so afterwards re-check that `justfile`/`Makefile` still point at `10-kitten`.
+2. **`Makefile` / `justfile`** — if upstream restructures the variant directory layout, re-point
+   `IMAGE_NAME` / `VERSION_MAJOR` defaults at `10-kitten` and re-run `just verify`.
+3. **`.github/workflows/`** — if upstream restructured actions, port the fork's adaptations
+   (SHA pinning, ghcr.io target) onto the new layout.
+4. **All other fork-owned files** (`docs/*`, `tests/*`, `README.md`, `CONTRIBUTING.md`) — these
+   should never conflict; if they do, our changes are likely lost; git reflog + reset.
+
+Re-verify the footprint before relying on this list:
+
+```bash
+git fetch upstream
+git diff --name-status "$(git merge-base HEAD upstream/main)" HEAD
+```
 
 ## Post-rebase verification
 
